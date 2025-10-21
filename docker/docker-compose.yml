@@ -1,1 +1,12 @@
-
+version: "3.9"
+services:
+devtube:
+build: ./
+image: ghcr.io/tomas94tomas/devtube:local
+ports:
+- "5000:5000"
+env_file:
+- ../.env.example
+volumes:
+- ../app/videos.db:/app/videos.db
+working_dir: /app
