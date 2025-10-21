@@ -2,30 +2,30 @@
 {% block content %}
 <h3 class="mb-3">Upload video</h3>
 <div class="row">
-<div class="col-md-6">
-<form method="post" enctype="multipart/form-data" class="mb-4">
-<div class="mb-3">
-<label class="form-label">Title</label>
-<input name="title" class="form-control" placeholder="My cool video" required />
-</div>
-<div class="mb-3">
-<label class="form-label">Upload file (MP4, WebM)</label>
-<input type="file" name="file" class="form-control" accept="video/*" />
-</div>
-<button class="btn btn-success" type="submit">Upload to S3</button>
-</form>
-<hr>
-<form method="post">
-<div class="mb-3">
-<label class="form-label">Or paste YouTube URL</label>
-<input name="youtube_url" class="form-control" placeholder="https://www.youtube.com/watch?v=..." />
-</div>
-<div class="mb-3">
-<label class="form-label">Title</label>
-<input name="title" class="form-control" placeholder="Great video" />
-</div>
-<button class="btn btn-outline-primary" type="submit">Add YouTube link</button>
-</form>
-</div>
+  <div class="col-md-6">
+    <form method="post" enctype="multipart/form-data" class="mb-4">
+      <div class="mb-3">
+        <label class="form-label">Title</label>
+        <input name="title" class="form-control" placeholder="My cool video" required />
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Upload file (MP4, WebM)</label>
+        <input type="file" name="file" class="form-control" accept="video/*" />
+      </div>
+      <button class="btn btn-success" type="submit">Upload to S3</button>
+    </form>
+    <hr>
+    <form method="post">
+      <div class="mb-3">
+        <label class="form-label">Or paste YouTube URL</label>
+        <input name="youtube_url" class="form-control" placeholder="https://www.youtube.com/watch?v=..." />
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Title</label>
+        <input name="title" class="form-control" placeholder="Great video" />
+      </div>
+      <button class="btn btn-outline-primary" type="submit">Add YouTube link</button>
+    </form>
+  </div>
 </div>
 {% endblock %}
