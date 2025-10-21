@@ -1,1 +1,48 @@
-
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: devtube
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: devtube
+  template:
+    metadata:
+      labels:
+        app: devtube
+    spec:
+      containers:
+        - name: web
+          image: ghcr.io/tomas94tomas/devtube:latest
+          ports:
+            - containerPort: 5000
+          env:
+            - name: AWS_REGION
+              valueFrom:
+                secretKeyRef:
+                  name: devtube-secrets
+                  key: AWS_REGION
+            - name: AWS_S3_BUCKET
+              valueFrom:
+                secretKeyRef:
+                  name: devtube-secrets
+                  key: AWS_S3_BUCKET
+          volumeMounts:
+            - name: db
+              mountPath: /app/videos.db
+              subPath: videos.db
+      volumes:
+        - name: db
+          persistentVolumeClaim:
+            claimName: devtube-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: devtube-pvc
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
