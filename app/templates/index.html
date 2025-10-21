@@ -2,16 +2,16 @@
 {% block content %}
 <h3 class="mb-3">Latest videos</h3>
 <div class="row g-3">
-{% for v in videos %}
-<div class="col-md-4">
-<div class="card h-100">
-<div class="card-body">
-<h5 class="card-title">{{ v.title }}</h5>
-<p class="card-text small text-muted">Source: {{ v.source.upper() }} · ❤ {{ v.likes }} · 👁 {{ v.views }}</p>
-<a class="btn btn-primary" href="/watch/{{ v.id }}">Watch</a>
-</div>
-</div>
-</div>
-{% endfor %}
+  {% for v in videos %}
+  <div class="col-md-4">
+    <div class="card h-100">
+      <div class="card-body">
+        <h5 class="card-title">{{ v.title }}</h5>
+        <p class="card-text small text-muted">Source: {{ v.source.upper() }} · ❤ {{ v.likes }} · 👁 {{ v.views }}</p>
+        <a class="btn btn-primary" href="/watch/{{ v.id }}">Watch</a>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
 </div>
 {% endblock %}
