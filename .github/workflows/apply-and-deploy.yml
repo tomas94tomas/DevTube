@@ -65,7 +65,8 @@ jobs:
           fi
 
           # Import S3 bucket: find first bucket that starts with project-
-          bucket=$(aws s3api list-buckets --query "Buckets[?starts_with(Name, \`${project}-\`)].Name | [0]" --output text 2>/dev/null || true)
+          # Use a safe list+grep pipeline to avoid complicated JMESPath quoting in the shell here.
+          bucket=$(aws s3api list-buckets --query "Buckets[].Name" --output text 2>/dev/null | tr '\t' '\n' | grep -E "^${project}-" | head -n1 || true)
           if [ -n "$bucket" ] && [ "$bucket" != "None" ]; then
             echo "Importing s3 bucket $bucket"
             terraform import -lock=false aws_s3_bucket.videos "$bucket" || true
