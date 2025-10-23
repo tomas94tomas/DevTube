@@ -108,22 +108,10 @@ data "aws_ami" "ubuntu" {
 }
 
 # GitHub Actions Terraform Apply step configuration
-locals {
-  # Keep a literal GitHub Actions snippet here for reference. Use a literal
-  # heredoc (single-quoted) to prevent Terraform from attempting to interpolate
-  # `${{ ... }}` expressions which are GitHub Actions syntax and invalid in
-  # Terraform. This block is informational only.
-  github_actions_terraform_apply = <<'EOT'
-    - name: Terraform Apply
-      env:
-        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        TF_VAR_public_key: ${{ secrets.PUBLIC_KEY }}
-        TF_VAR_project: ${{ secrets.PROJECT }}        # optional
-        TF_VAR_instance_type: ${{ secrets.INSTANCE_TYPE }}
-      run: |
-        terraform init
-        terraform plan -out plan.tfplan -var "aws_region=eu-west-1"
-        terraform apply -auto-approve plan.tfplan
-  EOT
-}
+/*
+locals block containing a GitHub Actions snippet removed.
+If you want to keep an example of a GitHub Actions apply step for
+reference, store it in repository documentation instead of in Terraform
+HCL source. Embedding `${{ ... }}` sequences in HCL causes Terraform to
+parse them and fail.
+*/
