@@ -31,6 +31,60 @@ jobs:
         working-directory: ./terraform
         run: terraform init -input=false
 
+      - name: Import existing AWS resources (if present)
+        working-directory: ./terraform
+        run: |
+          set -euo pipefail
+          # NOTE: we assume default project name 'devtube' unless variables.tf specifies otherwise.
+          project="devtube"
+          # Try to parse project default from variables.tf (best-effort)
+          proj_from_file=$(grep -Poz "variable \"project\"[\s\S]*?default\s*=\s*\"\K[^"]+" variables.tf || true)
+          if [ -n "$proj_from_file" ]; then
+            project="$proj_from_file"
+          fi
+
+          echo "Using project basename: $project"
+
+          # Import IAM role if it exists
+          if aws iam get-role --role-name "${project}-ec2-role" >/dev/null 2>&1; then
+            echo "Importing IAM role ${project}-ec2-role"
+            terraform import -lock=false aws_iam_role.ec2_role "${project}-ec2-role" || true
+          fi
+
+          # Import IAM instance profile
+          if aws iam get-instance-profile --instance-profile-name "${project}-instance-profile" >/dev/null 2>&1; then
+            echo "Importing IAM instance profile ${project}-instance-profile"
+            terraform import -lock=false aws_iam_instance_profile.ec2_profile "${project}-instance-profile" || true
+          fi
+
+          # Import security group by name
+          sgid=$(aws ec2 describe-security-groups --filters Name=group-name,Values="${project}-sg" --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || true)
+          if [ -n "$sgid" ] && [ "$sgid" != "None" ]; then
+            echo "Importing security group $sgid"
+            terraform import -lock=false aws_security_group.web "$sgid" || true
+          fi
+
+          # Import S3 bucket: find first bucket that starts with project-
+          bucket=$(aws s3api list-buckets --query "Buckets[?starts_with(Name, \`${project}-\`)].Name | [0]" --output text 2>/dev/null || true)
+          if [ -n "$bucket" ] && [ "$bucket" != "None" ]; then
+            echo "Importing s3 bucket $bucket"
+            terraform import -lock=false aws_s3_bucket.videos "$bucket" || true
+          fi
+
+          # Import key pair (search by prefix)
+          keyname=$(aws ec2 describe-key-pairs --filters Name=key-name,Values="${project}-runner*" --query 'KeyPairs[0].KeyName' --output text 2>/dev/null || true)
+          if [ -n "$keyname" ] && [ "$keyname" != "None" ]; then
+            echo "Importing key pair $keyname"
+            terraform import -lock=false aws_key_pair.this "$keyname" || true
+          fi
+
+          # Import EC2 instance by tag Name
+          instance_id=$(aws ec2 describe-instances --filters Name=tag:Name,Values="${project}-k3s" --query 'Reservations[0].Instances[0].InstanceId' --output text 2>/dev/null || true)
+          if [ -n "$instance_id" ] && [ "$instance_id" != "None" ]; then
+            echo "Importing EC2 instance $instance_id"
+            terraform import -lock=false aws_instance.k3s "$instance_id" || true
+          fi
+
       - name: Terraform Apply
         id: tf_apply
         working-directory: ./terraform
