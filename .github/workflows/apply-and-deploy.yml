@@ -8,6 +8,11 @@ name: Provision (apply) and deploy (manual)
 on:
   workflow_dispatch: {}
 
+name: Provision (apply) and deploy (manual)
+
+on:
+  workflow_dispatch: {}
+
 permissions:
   contents: read
   id-token: write
