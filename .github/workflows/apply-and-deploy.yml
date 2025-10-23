@@ -38,7 +38,7 @@ jobs:
           # NOTE: we assume default project name 'devtube' unless variables.tf specifies otherwise.
           project="devtube"
           # Try to parse project default from variables.tf (best-effort)
-          proj_from_file=$(grep -Poz "variable \"project\"[\s\S]*?default\s*=\s*\"\K[^"]+" variables.tf || true)
+            proj_from_file=$(awk 'BEGIN{p=0} /variable[ \t]+"project"/{p=1} p && /default[ \t]*=/{gsub(/.*=/,""); gsub(/^[ \t]*"/,"",$0); gsub(/".*/,"",$0); print $0; exit}' variables.tf || true)
           if [ -n "$proj_from_file" ]; then
             project="$proj_from_file"
           fi
