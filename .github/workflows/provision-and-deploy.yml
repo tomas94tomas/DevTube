@@ -20,6 +20,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Debug info (non-sensitive)
+        run: |
+          echo "=== Debug: repo info ==="
+          pwd
+          git rev-parse --abbrev-ref HEAD || true
+          echo "--- top-level files ---"
+          ls -la
+          echo "--- show Dockerfile (if present) ---"
+          if [ -f docker/Dockerfile ]; then sed -n '1,200p' docker/Dockerfile; else echo 'no docker/Dockerfile'; fi
+          echo "--- show k8s manifests (first 200 lines each) ---"
+          for f in k8s/*.yaml k8s/*.yml; do [ -f "$f" ] && { echo "--- $f ---"; sed -n '1,200p' "$f"; } || true; done
+          echo "--- Terraform files (list only) ---"
+          ls -la terraform || true
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
@@ -57,7 +71,9 @@ EOF
 
       - name: Terraform init
         working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform init -input=false
+        run: |
+          set -x
+          terraform init -input=false
 
       - name: Terraform apply
         working-directory: ${{ env.TF_WORKING_DIR }}
@@ -65,6 +81,7 @@ EOF
           TF_VAR_project: devtube
           TF_VAR_instance_type: t3.micro
         run: |
+          set -x
           # pass public key content and path to Terraform; main.tf should accept one of these
           PUBKEY=$(cat ../../deployer_key.pub)
           terraform apply -auto-approve -var "public_key=$PUBKEY" -var "public_key_path=$(pwd)/../../deployer_key.pub" -var "key_name=devtube" -var "aws_region=${{ secrets.AWS_REGION }}"
