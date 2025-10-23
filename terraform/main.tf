@@ -80,15 +80,18 @@ resource "aws_security_group" "web" {
 
 data "aws_vpc" "default" { default = true }
 
-data "aws_subnet_ids" "default" {
-  vpc_id = data.aws_vpc.default.id
+data "aws_subnets" "default" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.default.id]
+  }
 }
 
 # EC2 with k3s via user_data
 resource "aws_instance" "k3s" {
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.instance_type
-  subnet_id              = element(data.aws_subnet_ids.default.ids, 0)
+  subnet_id              = element(data.aws_subnets.default.ids, 0)
   vpc_security_group_ids = [aws_security_group.web.id]
   key_name               = aws_key_pair.this.key_name
   iam_instance_profile   = aws_iam_instance_profile.ec2_profile.name
