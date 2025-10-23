@@ -83,100 +83,161 @@ permissions:
 
             keyname=$(aws ec2 describe-key-pairs --filters Name=key-name,Values="${project}-runner*" --query 'KeyPairs[0].KeyName' --output text 2>/dev/null || true)
             if [ -n "$keyname" ] && [ "$keyname" != "None" ]; then
-              terraform import -lock=false aws_key_pair.this "$keyname" || true
-            fi
+              name: Provision (apply) and deploy (manual)
 
-            instance_id=$(aws ec2 describe-instances --filters Name=tag:Name,Values="${project}-k3s" --query 'Reservations[0].Instances[0].InstanceId' --output text 2>/dev/null || true)
-            if [ -n "$instance_id" ] && [ "$instance_id" != "None" ]; then
-              terraform import -lock=false aws_instance.k3s "$instance_id" || true
-            fi
+              on:
+                workflow_dispatch: {}
 
-        - name: Terraform Apply
-          working-directory: ./terraform
-          run: |
-            terraform apply -auto-approve
+              permissions:
+                contents: read
+                id-token: write
 
-        - name: Capture Terraform outputs (write outputs.json and parse)
-          id: tf_outputs
-          working-directory: ./terraform
-          run: |
-            terraform output -json > outputs.json || true
-            instance_ip=$(jq -r '.instance_public_ip.value // ""' outputs.json 2>/dev/null || true)
-            echo "instance_ip=$instance_ip" >> $GITHUB_OUTPUT
-            priv=$(jq -r '.generated_private_key_pem.value // ""' outputs.json 2>/dev/null || true)
-            if [ -n "$priv" ]; then
-              keypath="$GITHUB_WORKSPACE/runner_key.pem"
-              printf '%s' "$priv" > "$keypath"
-              chmod 600 "$keypath"
-              echo "private_key_file=$keypath" >> $GITHUB_OUTPUT
-            else
-              echo "private_key_file=" >> $GITHUB_OUTPUT
-            fi
+              jobs:
+                apply-and-deploy:
+                  name: Provision (apply) and deploy (manual)
+                  runs-on: ubuntu-latest
+                  environment: production
+                  permissions:
+                    contents: read
+                    id-token: write
+                  steps:
+                    - name: Checkout
+                      uses: actions/checkout@v4
 
-        - name: Upload terraform outputs artifact
-          uses: actions/upload-artifact@v4
-          with:
-            name: terraform-outputs
-            path: ./terraform/outputs.json
+                    - name: Configure AWS Credentials
+                      uses: aws-actions/configure-aws-credentials@v2
+                      with:
+                        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+                        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+                        aws-region: eu-central-1
 
-        - name: Prepare SSH key (use generated key or fallback to repo secret)
-          id: prepare_ssh
-          env:
-            EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
-          run: |
-            set -euo pipefail
-            keyfile="${{ steps.tf_outputs.outputs.private_key_file }}"
-            if [ -n "$keyfile" ] && [ -f "$keyfile" ]; then
-              :
-            else
-              if [ -n "$EC2_SSH_KEY" ]; then
-                keyfile="$GITHUB_WORKSPACE/runner_key.pem"
-                printf '%s' "$EC2_SSH_KEY" > "$keyfile"
-                chmod 600 "$keyfile"
-              else
-                echo "No private key available (terraform didn't generate one and EC2_SSH_KEY secret is empty)." >&2
-                exit 1
-              fi
-            fi
-            echo "ssh_key_file=$keyfile" >> $GITHUB_OUTPUT
+                    - name: Setup Terraform
+                      uses: hashicorp/setup-terraform@v2
+                      with:
+                        terraform_version: 1.6.6
 
-        - name: Determine SSH user
-          id: ssh_user
-          run: |
-            echo "ssh_user=ubuntu" >> $GITHUB_OUTPUT
+                    - name: Terraform Init
+                      working-directory: ./terraform
+                      run: terraform init -input=false
 
-        - name: Wait for SSH and deploy k8s manifests
-          if: ${{ steps.tf_outputs.outputs.instance_ip != '' }}
-          env:
-            SSH_KEY_FILE: ${{ steps.prepare_ssh.outputs.ssh_key_file }}
-            INSTANCE_IP: ${{ steps.tf_outputs.outputs.instance_ip }}
-            SSH_USER: ${{ steps.ssh_user.outputs.ssh_user }}
-          run: |
-            set -e
-            echo "Waiting for SSH on $INSTANCE_IP..."
-            for i in {1..30}; do
-              if ssh -o BatchMode=yes -o StrictHostKeyChecking=no -i "$SSH_KEY_FILE" "$SSH_USER"@"$INSTANCE_IP" 'echo ok' >/dev/null 2>&1; then
-                echo "SSH reachable"
-                break
-              fi
-              echo "Waiting... ($i)"
-              sleep 10
-            done
-            scp -o StrictHostKeyChecking=no -i "$SSH_KEY_FILE" -r ./k8s "$SSH_USER"@"$INSTANCE_IP":/tmp/k8s
-            ssh -o StrictHostKeyChecking=no -i "$SSH_KEY_FILE" "$SSH_USER"@"$INSTANCE_IP" 'sudo k3s kubectl apply -f /tmp/k8s'
+                    - name: Import existing AWS resources (if present)
+                      working-directory: ./terraform
+                      run: |
+                        set -euo pipefail
+                        project="devtube"
+                        proj_from_file=$(awk 'BEGIN{p=0} /variable[ \t]+"project"/{p=1} p && /default[ \t]*=/{gsub(/.*=/,""); gsub(/^[ \t]*\"/,"",$0); gsub(/\".*/,"",$0); print $0; exit}' variables.tf || true)
+                        if [ -n "$proj_from_file" ]; then
+                          project="$proj_from_file"
+                        fi
 
-        - name: Cleanup private key from runner
-          if: always()
-          run: |
-            rm -f "$GITHUB_WORKSPACE/runner_key.pem" || true
-            rm -f runner_key.pem || true
-            unset TF_VAR_private_key
-          echo "Applying manifests on remote"
-          ssh -o StrictHostKeyChecking=no -i "$SSH_KEY_FILE" "$SSH_USER"@"$INSTANCE_IP" 'sudo k3s kubectl apply -f /tmp/k8s'
+                        echo "Using project basename: $project"
 
-      - name: Cleanup private key from runner
-        if: always()
-        run: |
-          rm -f "$GITHUB_WORKSPACE/runner_key.pem" || true
-          rm -f runner_key.pem || true
-          unset TF_VAR_private_key
+                        if aws iam get-role --role-name "${project}-ec2-role" >/dev/null 2>&1; then
+                          terraform import -lock=false aws_iam_role.ec2_role "${project}-ec2-role" || true
+                        fi
+
+                        if aws iam get-instance-profile --instance-profile-name "${project}-instance-profile" >/dev/null 2>&1; then
+                          terraform import -lock=false aws_iam_instance_profile.ec2_profile "${project}-instance-profile" || true
+                        fi
+
+                        sgid=$(aws ec2 describe-security-groups --filters Name=group-name,Values="${project}-sg" --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || true)
+                        if [ -n "$sgid" ] && [ "$sgid" != "None" ]; then
+                          terraform import -lock=false aws_security_group.web "$sgid" || true
+                        fi
+
+                        bucket=$(aws s3api list-buckets --query "Buckets[].Name" --output text 2>/dev/null | tr '\t' '\n' | grep -E "^${project}-" | head -n1 || true)
+                        if [ -n "$bucket" ] && [ "$bucket" != "None" ]; then
+                          terraform import -lock=false aws_s3_bucket.videos "$bucket" || true
+                        fi
+
+                        keyname=$(aws ec2 describe-key-pairs --filters Name=key-name,Values="${project}-runner*" --query 'KeyPairs[0].KeyName' --output text 2>/dev/null || true)
+                        if [ -n "$keyname" ] && [ "$keyname" != "None" ]; then
+                          terraform import -lock=false aws_key_pair.this "$keyname" || true
+                        fi
+
+                        instance_id=$(aws ec2 describe-instances --filters Name=tag:Name,Values="${project}-k3s" --query 'Reservations[0].Instances[0].InstanceId' --output text 2>/dev/null || true)
+                        if [ -n "$instance_id" ] && [ "$instance_id" != "None" ]; then
+                          terraform import -lock=false aws_instance.k3s "$instance_id" || true
+                        fi
+
+                    - name: Terraform Apply
+                      working-directory: ./terraform
+                      run: |
+                        terraform apply -auto-approve
+
+                    - name: Capture Terraform outputs (write outputs.json and parse)
+                      id: tf_outputs
+                      working-directory: ./terraform
+                      run: |
+                        set -euo pipefail
+                        terraform output -json > outputs.json || true
+                        instance_ip=$(jq -r '.instance_public_ip.value // ""' outputs.json 2>/dev/null || true)
+                        echo "instance_ip=$instance_ip" >> $GITHUB_OUTPUT
+                        priv=$(jq -r '.generated_private_key_pem.value // ""' outputs.json 2>/dev/null || true)
+                        if [ -n "$priv" ]; then
+                          keypath="$GITHUB_WORKSPACE/runner_key.pem"
+                          printf '%s' "$priv" > "$keypath"
+                          chmod 600 "$keypath"
+                          echo "private_key_file=$keypath" >> $GITHUB_OUTPUT
+                        else
+                          echo "private_key_file=" >> $GITHUB_OUTPUT
+                        fi
+
+                    - name: Upload terraform outputs artifact
+                      uses: actions/upload-artifact@v4
+                      with:
+                        name: terraform-outputs
+                        path: ./terraform/outputs.json
+
+                    - name: Prepare SSH key (use generated key or fallback to repo secret)
+                      id: prepare_ssh
+                      env:
+                        EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+                      run: |
+                        set -euo pipefail
+                        keyfile="${{ steps.tf_outputs.outputs.private_key_file }}"
+                        if [ -n "$keyfile" ] && [ -f "$keyfile" ]; then
+                          :
+                        else
+                          if [ -n "$EC2_SSH_KEY" ]; then
+                            keyfile="$GITHUB_WORKSPACE/runner_key.pem"
+                            printf '%s' "$EC2_SSH_KEY" > "$keyfile"
+                            chmod 600 "$keyfile"
+                          else
+                            echo "No private key available (terraform didn't generate one and EC2_SSH_KEY secret is empty)." >&2
+                            exit 1
+                          fi
+                        fi
+                        echo "ssh_key_file=$keyfile" >> $GITHUB_OUTPUT
+
+                    - name: Determine SSH user
+                      id: ssh_user
+                      run: |
+                        echo "ssh_user=ubuntu" >> $GITHUB_OUTPUT
+
+                    - name: Wait for SSH and deploy k8s manifests
+                      if: ${{ steps.tf_outputs.outputs.instance_ip != '' }}
+                      env:
+                        SSH_KEY_FILE: ${{ steps.prepare_ssh.outputs.ssh_key_file }}
+                        INSTANCE_IP: ${{ steps.tf_outputs.outputs.instance_ip }}
+                        SSH_USER: ${{ steps.ssh_user.outputs.ssh_user }}
+                      run: |
+                        set -e
+                        echo "Waiting for SSH on $INSTANCE_IP..."
+                        for i in {1..30}; do
+                          if ssh -o BatchMode=yes -o StrictHostKeyChecking=no -i "$SSH_KEY_FILE" "$SSH_USER"@"$INSTANCE_IP" 'echo ok' >/dev/null 2>&1; then
+                            echo "SSH reachable"
+                            break
+                          fi
+                          echo "Waiting... ($i)"
+                          sleep 10
+                        done
+                        scp -o StrictHostKeyChecking=no -i "$SSH_KEY_FILE" -r ./k8s "$SSH_USER"@"$INSTANCE_IP":/tmp/k8s
+                        ssh -o StrictHostKeyChecking=no -i "$SSH_KEY_FILE" "$SSH_USER"@"$INSTANCE_IP" 'sudo k3s kubectl apply -f /tmp/k8s'
+
+                    - name: Cleanup private key from runner
+                      if: always()
+                      run: |
+                        rm -f "$GITHUB_WORKSPACE/runner_key.pem" || true
+                        rm -f runner_key.pem || true
+                        unset TF_VAR_private_key
