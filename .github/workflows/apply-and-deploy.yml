@@ -37,16 +37,18 @@ jobs:
         run: |
           terraform apply -auto-approve
 
-      - name: Capture Terraform outputs (instance IP & generated private key)
+      - name: Capture Terraform outputs (write outputs.json and parse)
         id: tf_outputs
         working-directory: ./terraform
         run: |
-          # get instance IP (raw) and write to workflow output
-          instance_ip=$(terraform output -raw instance_public_ip || true)
+          # Export all outputs to JSON (avoid parsing terraform stdout which can include runner debug text)
+          terraform output -json > outputs.json || true
+
+          # Extract instance IP and generated private key using jq
+          instance_ip=$(jq -r '.instance_public_ip.value // ""' outputs.json 2>/dev/null || true)
           echo "instance_ip=$instance_ip" >> $GITHUB_OUTPUT
 
-          # get generated private key PEM (raw). If empty, this will be an empty string.
-          priv=$(terraform output -raw generated_private_key_pem 2>/dev/null || true)
+          priv=$(jq -r '.generated_private_key_pem.value // ""' outputs.json 2>/dev/null || true)
           if [ -n "$priv" ]; then
             # write key to file without printing it to logs
             printf '%s' "$priv" > runner_key.pem
