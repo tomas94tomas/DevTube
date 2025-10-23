@@ -6,10 +6,24 @@ terraform {
 
 provider "aws" { region = var.aws_region }
 
-# Key pair
+# If no public_key_path is supplied, generate a temporary keypair (tls)
+resource "tls_private_key" "generated" {
+  count = var.public_key_path == "" ? 1 : 0
+  algorithm = "RSA"
+  rsa_bits  = 4096
+}
+
+# Determine key name: use provided var.key_name if set, otherwise create a name
+locals {
+  effective_key_name = var.key_name != "" ? var.key_name : "${var.project}-runner-${random_id.rand.hex}"
+  # choose public key from file if provided, otherwise use generated public key
+  effective_public_key = var.public_key_path != "" ? file(var.public_key_path) : (length(tls_private_key.generated) > 0 ? tls_private_key.generated[0].public_key_openssh : "")
+}
+
+# Key pair in AWS using either provided public key or generated key
 resource "aws_key_pair" "this" {
-  key_name   = var.key_name
-  public_key = file(var.public_key_path)
+  key_name   = local.effective_key_name
+  public_key = local.effective_public_key
 }
 
 # S3 bucket for videos

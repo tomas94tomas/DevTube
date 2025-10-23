@@ -1,0 +1,123 @@
+name: Provision (apply) and deploy (manual)
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  apply-and-deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ inputs.aws_region || 'eu-central-1' }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.6.6
+
+      - name: Terraform Init
+        working-directory: ./terraform
+        run: terraform init -input=false
+
+      - name: Terraform Apply
+        id: tf_apply
+        working-directory: ./terraform
+        run: |
+          terraform apply -auto-approve
+
+      - name: Capture Terraform outputs (instance IP & generated private key)
+        id: tf_outputs
+        working-directory: ./terraform
+        run: |
+          # get instance IP (raw) and write to workflow output
+          instance_ip=$(terraform output -raw instance_public_ip || true)
+          echo "instance_ip=$instance_ip" >> $GITHUB_OUTPUT
+
+          # get generated private key PEM (raw). If empty, this will be an empty string.
+          priv=$(terraform output -raw generated_private_key_pem 2>/dev/null || true)
+          if [ -n "$priv" ]; then
+            # write key to file without printing it to logs
+            printf '%s' "$priv" > runner_key.pem
+            chmod 600 runner_key.pem
+            echo "private_key_file=runner_key.pem" >> $GITHUB_OUTPUT
+          else
+            echo "private_key_file=" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Save terraform outputs JSON
+        working-directory: ./terraform
+        run: |
+          terraform output -json > outputs.json || true
+
+      - name: Upload terraform outputs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-outputs
+          path: ./terraform/outputs.json
+
+      - name: Prepare SSH key (use generated key or fallback to repo secret)
+        id: prepare_ssh
+        env:
+          EC2_SSH_KEY: ${{ secrets.EC2_SSH_KEY }}
+        run: |
+          keyfile="${{ steps.tf_outputs.outputs.private_key_file }}"
+          # If terraform didn't generate a key, use the EC2_SSH_KEY secret (if provided)
+          if [ -z "$keyfile" ] || [ "$keyfile" = "" ]; then
+            if [ -n "$EC2_SSH_KEY" ]; then
+              printf '%s' "$EC2_SSH_KEY" > runner_key.pem
+              chmod 600 runner_key.pem
+              keyfile=runner_key.pem
+            else
+              echo "No private key available (terraform didn't generate one and EC2_SSH_KEY secret is empty)." >&2
+              exit 1
+            fi
+          fi
+          echo "ssh_key_file=$keyfile" >> $GITHUB_OUTPUT
+
+      - name: Determine SSH user
+        id: ssh_user
+        run: |
+          # Ubuntu AMIs use 'ubuntu'. Adjust if you customized the AMI/user.
+          echo "ssh_user=ubuntu" >> $GITHUB_OUTPUT
+
+      - name: Wait for SSH and deploy k8s manifests
+        if: ${{ steps.tf_outputs.outputs.instance_ip != '' }}
+        env:
+          SSH_KEY_FILE: ${{ steps.prepare_ssh.outputs.ssh_key_file }}
+          INSTANCE_IP: ${{ steps.tf_outputs.outputs.instance_ip }}
+          SSH_USER: ${{ steps.ssh_user.outputs.ssh_user }}
+        run: |
+          set -e
+          echo "Waiting for SSH on $INSTANCE_IP..."
+          for i in {1..30}; do
+            if ssh -o BatchMode=yes -o StrictHostKeyChecking=no -i "$SSH_KEY_FILE" "$SSH_USER"@"$INSTANCE_IP" 'echo ok' >/dev/null 2>&1; then
+              echo "SSH reachable"
+              break
+            fi
+            echo "Waiting... ($i)"
+            sleep 10
+          done
+
+          echo "Copying k8s manifests to remote"
+          scp -o StrictHostKeyChecking=no -i "$SSH_KEY_FILE" -r ./k8s "$SSH_USER"@"$INSTANCE_IP":/tmp/k8s
+
+          echo "Applying manifests on remote"
+          ssh -o StrictHostKeyChecking=no -i "$SSH_KEY_FILE" "$SSH_USER"@"$INSTANCE_IP" 'sudo k3s kubectl apply -f /tmp/k8s'
+
+      - name: Cleanup private key from runner
+        if: always()
+        run: |
+          rm -f runner_key.pem || true
+          unset TF_VAR_private_key
