@@ -101,38 +101,26 @@ jobs:
           fi
 
       - name: Terraform Apply
-        id: tf_apply
-        working-directory: ./terraform
-        run: |
-          terraform apply -auto-approve
+        name: Provision (apply) and deploy (manual)
 
-      - name: Capture Terraform outputs (write outputs.json and parse)
-        id: tf_outputs
-        working-directory: ./terraform
-        run: |
-          # Export all outputs to JSON (avoid parsing terraform stdout which can include runner debug text)
-          terraform output -json > outputs.json || true
+        on:
+          workflow_dispatch: {}
 
-          # Extract instance IP and generated private key using jq
-          instance_ip=$(jq -r '.instance_public_ip.value // ""' outputs.json 2>/dev/null || true)
-          echo "instance_ip=$instance_ip" >> $GITHUB_OUTPUT
+        permissions:
+          contents: read
+          id-token: write
 
-          priv=$(jq -r '.generated_private_key_pem.value // ""' outputs.json 2>/dev/null || true)
-          if [ -n "$priv" ]; then
-            # write key to a runner-writable absolute path without printing it to logs
-            keypath="$GITHUB_WORKSPACE/runner_key.pem"
-            printf '%s' "$priv" > "$keypath"
-            chmod 600 "$keypath"
-            echo "private_key_file=$keypath" >> $GITHUB_OUTPUT
-          else
-            echo "private_key_file=" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Save terraform outputs JSON
-        working-directory: ./terraform
-        run: |
-          terraform output -json > outputs.json || true
-
+        jobs:
+          apply-and-deploy:
+            name: Provision (apply) and deploy (manual)
+            runs-on: ubuntu-latest
+            environment: production
+            permissions:
+              contents: read
+              id-token: write
+            steps:
+              - name: Checkout
+                uses: actions/checkout@v4
       - name: Upload terraform outputs artifact
         uses: actions/upload-artifact@v4
         with:
