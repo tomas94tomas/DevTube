@@ -14,7 +14,7 @@ resource "aws_key_pair" "this" {
 
 # S3 bucket for videos
 resource "aws_s3_bucket" "videos" {
-  bucket = "${var.project}-${random_id.rand.hex}"
+  bucket        = "${var.project}-${random_id.rand.hex}"
   force_destroy = true
 }
 
@@ -26,9 +26,9 @@ resource "aws_iam_role" "ec2_role" {
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
     Statement = [{
-      Effect = "Allow",
+      Effect    = "Allow",
       Principal = { Service = "ec2.amazonaws.com" },
-      Action = "sts:AssumeRole"
+      Action    = "sts:AssumeRole"
     }]
   })
 }
@@ -80,7 +80,9 @@ resource "aws_security_group" "web" {
 
 data "aws_vpc" "default" { default = true }
 
-data "aws_subnet_ids" "default" { vpc_id = data.aws_vpc.default.id }
+data "aws_subnet_ids" "default" {
+  vpc_id = data.aws_vpc.default.id
+}
 
 # EC2 with k3s via user_data
 resource "aws_instance" "k3s" {
@@ -103,4 +105,25 @@ data "aws_ami" "ubuntu" {
     name   = "name"
     values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"]
   }
+}
+
+# GitHub Actions Terraform Apply step configuration
+locals {
+  # Keep a literal GitHub Actions snippet here for reference. Use a literal
+  # heredoc (single-quoted) to prevent Terraform from attempting to interpolate
+  # `${{ ... }}` expressions which are GitHub Actions syntax and invalid in
+  # Terraform. This block is informational only.
+  github_actions_terraform_apply = <<'EOT'
+    - name: Terraform Apply
+      env:
+        AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        TF_VAR_public_key: ${{ secrets.PUBLIC_KEY }}
+        TF_VAR_project: ${{ secrets.PROJECT }}        # optional
+        TF_VAR_instance_type: ${{ secrets.INSTANCE_TYPE }}
+      run: |
+        terraform init
+        terraform plan -out plan.tfplan -var "aws_region=eu-west-1"
+        terraform apply -auto-approve plan.tfplan
+  EOT
 }

@@ -41,7 +41,8 @@ jobs:
           # create a temporary keypair in the terraform directory
           ssh-keygen -t rsa -b 2048 -f ./runner_key -N '' -C "ci-generated-key" || true
           export TF_VAR_key_name="devtube-runner-$(date +%s)"
-          export TF_VAR_public_key_path="${{ env.TF_WORKING_DIR }}/runner_key.pub"
+          # terraform will read the public key file relative to the working dir
+          export TF_VAR_public_key_path="./runner_key.pub"
           echo "Using TF_VAR_key_name=$TF_VAR_key_name"
           terraform init -input=false
           terraform validate || true
