@@ -33,10 +33,16 @@ jobs:
         with:
           terraform_version: '1.6.6'
 
-      - name: Terraform init/validate/plan
+      - name: Prepare ephemeral SSH key and Terraform init/validate/plan
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: |
           set -euo pipefail
+          echo "Generating ephemeral SSH keypair for Terraform key pair resource"
+          # create a temporary keypair in the terraform directory
+          ssh-keygen -t rsa -b 2048 -f ./runner_key -N '' -C "ci-generated-key" || true
+          export TF_VAR_key_name="devtube-runner-$(date +%s)"
+          export TF_VAR_public_key_path="${{ env.TF_WORKING_DIR }}/runner_key.pub"
+          echo "Using TF_VAR_key_name=$TF_VAR_key_name"
           terraform init -input=false
           terraform validate || true
           terraform plan -input=false -out=plan.tfplan
