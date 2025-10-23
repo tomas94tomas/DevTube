@@ -26,9 +26,9 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build image
-        working-directory: docker
+        # Run from repository root so the 'app/' directory is included in the build context
         run: |
-          docker build -t $IMAGE:${{ github.sha }} -t $IMAGE:latest .
+          docker build -f docker/Dockerfile -t $IMAGE:${{ github.sha }} -t $IMAGE:latest .
 
       - name: Push image
         run: |
