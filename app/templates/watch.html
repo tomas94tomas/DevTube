@@ -1,15 +1,23 @@
 {% extends 'base.html' %}
 {% block content %}
 <h3>{{ video.title }}</h3>
+
 <div class="mb-3">
   {% if video.source == 's3' %}
     <video controls width="100%" src="{{ video.play_url }}"></video>
   {% else %}
     <div class="ratio ratio-16x9">
-      <iframe src="{{ video.play_url | replace('watch?v=', 'embed/') }}" allowfullscreen></iframe>
+      <iframe
+        src="{{ video.play_url }}"
+        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+        referrerpolicy="strict-origin-when-cross-origin"
+        allowfullscreen
+        style="border:0;width:100%;height:100%">
+      </iframe>
     </div>
   {% endif %}
 </div>
+
 <p>❤ {{ video.likes }} · 👁 {{ video.views }}</p>
 <form method="post" action="/like/{{ video.id }}" onsubmit="fetch(this.action,{method:'POST'}).then(()=>location.reload());return false;">
   <button class="btn btn-danger">Like</button>

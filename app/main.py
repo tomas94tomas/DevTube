@@ -1,4 +1,5 @@
 import os
+from urllib.parse import urlparse, parse_qs
 from flask import Flask, render_template, request, redirect, url_for
 from dotenv import load_dotenv
 from werkzeug.utils import secure_filename
@@ -9,42 +10,90 @@ load_dotenv()
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 512 * 1024 * 1024  # 512MB cap
 
+
+# ---------- YouTube helpers ----------
+def to_embed(url: str | None) -> str | None:
+    """
+    Normalize any common YouTube URL (youtube.com, youtu.be, shorts) to an embeddable URL:
+      https://www.youtube-nocookie.com/embed/<id>
+    Returns None if the video id cannot be extracted.
+    """
+    if not url:
+        return None
+
+    u = urlparse(url)
+    host = u.netloc.lower().replace("www.", "")
+
+    # extract video id
+    vid = ""
+    if host == "youtu.be":
+        vid = u.path.lstrip("/")
+    elif "youtube.com" in host:
+        # /watch?v=ID
+        if u.path.startswith("/watch"):
+            vid = parse_qs(u.query).get("v", [""])[0]
+        # /embed/ID
+        elif "/embed/" in u.path:
+            vid = u.path.split("/embed/")[-1].split("/")[0]
+        # /shorts/ID
+        elif "/shorts/" in u.path:
+            vid = u.path.split("/shorts/")[-1].split("/")[0]
+
+    return f"https://www.youtube-nocookie.com/embed/{vid}" if vid else None
+# -------------------------------------
+
+
 # Ensure DB exists
 init_db()
 
+
 @app.route("/")
 def index():
-    videos = query("SELECT id, title, source, s3_key, youtube_url, views, likes, created_at FROM videos ORDER BY id DESC")
-    enriched = []
-    for v in videos:
-        vid = {
-            "id": v[0],
-            "title": v[1],
-            "source": v[2],
-            "s3_key": v[3],
-            "youtube_url": v[4],
-            "views": v[5],
-            "likes": v[6],
-            "created_at": v[7],
-            "play_url": presigned_url(v[3]) if v[2] == "s3" and v[3] else v[4]
-        }
-        enriched.append(vid)
-    return render_template("index.html", videos=enriched)
+    rows = query(
+        """
+        SELECT id, title, source, s3_key, youtube_url, views, likes, created_at
+        FROM videos ORDER BY id DESC
+        """
+    )
+    videos = []
+    for r in rows:
+        _id, title, source, s3_key, yt_url, views, likes, created_at = r
+        play_url = (
+            presigned_url(s3_key) if source == "s3" and s3_key else to_embed(yt_url)
+        )
+        videos.append(
+            {
+                "id": _id,
+                "title": title,
+                "source": source,
+                "s3_key": s3_key,
+                "youtube_url": yt_url,
+                "views": views,
+                "likes": likes,
+                "created_at": created_at,
+                "play_url": play_url,
+            }
+        )
+    return render_template("index.html", videos=videos)
+
 
 @app.route("/upload", methods=["GET", "POST"])
 def upload():
     if request.method == "POST":
-        title = request.form.get("title", "Untitled")
-        youtube_url = request.form.get("youtube_url")
+        title = request.form.get("title", "Untitled").strip()
+        youtube_url = (request.form.get("youtube_url") or "").strip()
         file = request.files.get("file")
 
-        if youtube_url and youtube_url.strip():
+        # Add a YouTube link
+        if youtube_url:
+            # store original URL; we'll normalize when playing
             execute(
                 "INSERT INTO videos (title, source, youtube_url) VALUES (?, 'youtube', ?)",
-                (title, youtube_url.strip()),
+                (title or "Untitled", youtube_url),
             )
             return redirect(url_for("index"))
 
+        # Upload a file to S3
         if file and file.filename:
             filename = secure_filename(file.filename)
             key = f"uploads/{filename}"
@@ -52,33 +101,45 @@ def upload():
             upload_fileobj(file, key, content_type)
             execute(
                 "INSERT INTO videos (title, source, s3_key) VALUES (?, 's3', ?)",
-                (title, key),
+                (title or filename, key),
             )
             return redirect(url_for("index"))
 
     return render_template("upload.html")
 
+
 @app.route("/watch/<int:vid>")
 def watch(vid: int):
-    row = query("SELECT id, title, source, s3_key, youtube_url, views, likes FROM videos WHERE id=?", (vid,))
+    row = query(
+        "SELECT id, title, source, s3_key, youtube_url, views, likes FROM videos WHERE id=?",
+        (vid,),
+    )
     if not row:
         return "Not found", 404
-    v = row[0]
+
+    _id, title, source, s3_key, yt_url, views, likes = row[0]
     execute("UPDATE videos SET views = views + 1 WHERE id=?", (vid,))
-    play_url = presigned_url(v[3]) if v[2] == "s3" and v[3] else v[4]
-    return render_template("watch.html", video={
-        "id": v[0],
-        "title": v[1],
-        "source": v[2],
-        "play_url": play_url,
-        "likes": v[6],
-        "views": v[5] + 1,
-    })
+
+    play_url = presigned_url(s3_key) if source == "s3" and s3_key else to_embed(yt_url)
+
+    return render_template(
+        "watch.html",
+        video={
+            "id": _id,
+            "title": title,
+            "source": source,
+            "play_url": play_url,
+            "likes": likes,
+            "views": views + 1,
+        },
+    )
+
 
 @app.route("/like/<int:vid>", methods=["POST"])
 def like(vid: int):
     execute("UPDATE videos SET likes = likes + 1 WHERE id=?", (vid,))
     return ("", 204)
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
