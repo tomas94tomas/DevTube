@@ -3,3 +3,9 @@ __pycache__/
 .env
 app/videos.db
 .venv/
+# Terraform local stuff
+terraform/.terraform/
+terraform/terraform.tfstate
+terraform/terraform.tfstate.*
+# Optional local helper
+cors.json

@@ -58,9 +58,9 @@ jobs:
         run: |
           ssh -o StrictHostKeyChecking=no ubuntu@${{ secrets.EC2_HOST }} <<'EOF'
           set -e
-          kubectl create ns devtube || true
-          # Create/refresh image in deployment file if needed
-          sed -i "s|ghcr.io/tomas94tomas/devtube:latest|$IMAGE|g" k8s/deployment.yaml
-          kubectl apply -n devtube -f k8s/deployment.yaml
-          kubectl apply -n devtube -f k8s/service.yaml
+          sudo kubectl create ns devtube || true
+          # pin the image tag in the manifest (in case it was cached)
+          sudo sed -i "s|ghcr.io/tomas94tomas/devtube:latest|$IMAGE|g" k8s/deployment.yaml
+          sudo kubectl apply -n devtube -f k8s/deployment.yaml
+          sudo kubectl apply -n devtube -f k8s/service.yaml
           EOF

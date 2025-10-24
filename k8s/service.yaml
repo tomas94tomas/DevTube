@@ -3,9 +3,10 @@ kind: Service
 metadata:
   name: devtube
 spec:
-  type: LoadBalancer
+  type: NodePort
   selector:
     app: devtube
   ports:
     - port: 80
       targetPort: 5000
+      nodePort: 30080
