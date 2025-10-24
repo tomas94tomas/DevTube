@@ -26,7 +26,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build image
-        # Run from repository root so the 'app/' directory is included in the build context
+        # Build from repo root so app/ is in the build context
         run: |
           docker build -f docker/Dockerfile -t $IMAGE:${{ github.sha }} -t $IMAGE:latest .
 
@@ -35,12 +35,12 @@ jobs:
           docker push $IMAGE:${{ github.sha }}
           docker push $IMAGE:latest
 
-  # Optional: remote deploy via SSH to EC2 and kubectl apply
   deploy:
     needs: build-and-push
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     env:
+      # default to latest tag for simplicity; we also force the image below via kubectl set image
       IMAGE: ghcr.io/tomas94tomas/devtube:latest
     steps:
       - uses: actions/checkout@v4
@@ -50,17 +50,33 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.EC2_SSH_KEY }}
 
-      - name: Copy manifests
+      - name: Copy manifests to EC2
         run: |
           scp -o StrictHostKeyChecking=no -r k8s ubuntu@${{ secrets.EC2_HOST }}:/home/ubuntu/
 
       - name: Apply manifests on EC2
+        env:
+          IMAGE: ${{ env.IMAGE }}   # expose IMAGE inside the heredoc
         run: |
-          ssh -o StrictHostKeyChecking=no ubuntu@${{ secrets.EC2_HOST }} <<'EOF'
-          set -e
+          ssh -o StrictHostKeyChecking=no ubuntu@${{ secrets.EC2_HOST }} <<EOF
+          set -euo pipefail
+
+          echo "Using image: ${IMAGE}"
+
+          # Ensure namespace exists
           sudo kubectl create ns devtube || true
-          # pin the image tag in the manifest (in case it was cached)
-          sudo sed -i "s|ghcr.io/tomas94tomas/devtube:latest|$IMAGE|g" k8s/deployment.yaml
+
+          # Pin the image inside the manifest (harmless if already correct)
+          sudo sed -i "s|ghcr.io/tomas94tomas/devtube:latest|${IMAGE}|g" k8s/deployment.yaml
+
+          # Apply K8s resources
           sudo kubectl apply -n devtube -f k8s/deployment.yaml
           sudo kubectl apply -n devtube -f k8s/service.yaml
+
+          # Force the Deployment to use exactly this image (extra safety)
+          sudo kubectl -n devtube set image deployment/devtube web=${IMAGE} --record || true
+
+          # Show status for debugging
+          echo "---"
+          sudo kubectl -n devtube get deploy,po,svc -o wide
           EOF
