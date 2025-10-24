@@ -28,10 +28,13 @@ spec:
                 secretKeyRef:
                   name: devtube-secrets
                   key: AWS_S3_BUCKET
+            # NEW: tell the app to store SQLite DB on the mounted volume
+            - name: DB_PATH
+              value: /data/videos.db
           volumeMounts:
+            # CHANGED: mount the PVC as a directory, not a single file
             - name: db
-              mountPath: /app/videos.db
-              subPath: videos.db
+              mountPath: /data
       volumes:
         - name: db
           persistentVolumeClaim:

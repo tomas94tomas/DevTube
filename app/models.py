@@ -1,7 +1,13 @@
+import os
 import sqlite3
 from contextlib import closing
 
-DB_PATH = "videos.db"
+# Allow overriding the DB path from the environment.
+# Default works locally; in K8s we set DB_PATH=/data/videos.db
+DB_PATH = os.getenv("DB_PATH", "videos.db")
+
+# Ensure the directory for the DB exists (important when DB_PATH is /data/videos.db)
+os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS videos (
@@ -21,13 +27,11 @@ def init_db():
         con.executescript(SCHEMA)
         con.commit()
 
-
 def query(sql, params=()):
     with closing(sqlite3.connect(DB_PATH)) as con:
         cur = con.execute(sql, params)
         rows = cur.fetchall()
     return rows
-
 
 def execute(sql, params=()):
     with closing(sqlite3.connect(DB_PATH)) as con:
