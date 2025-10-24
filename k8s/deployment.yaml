@@ -12,6 +12,15 @@ spec:
       labels:
         app: devtube
     spec:
+      # 1) Make sure the mount dir exists and is writable before the app starts
+      initContainers:
+        - name: init-db-dir
+          image: busybox:1.36
+          command: ["sh", "-c", "mkdir -p /data && chmod 777 /data"]
+          volumeMounts:
+            - name: db
+              mountPath: /data
+
       containers:
         - name: web
           image: ghcr.io/tomas94tomas/devtube:latest
@@ -28,13 +37,12 @@ spec:
                 secretKeyRef:
                   name: devtube-secrets
                   key: AWS_S3_BUCKET
-            # NEW: tell the app to store SQLite DB on the mounted volume
             - name: DB_PATH
-              value: /data/videos.db
+              value: /data/videos.db     # the SQLite file lives on the PVC
           volumeMounts:
-            # CHANGED: mount the PVC as a directory, not a single file
             - name: db
-              mountPath: /data
+              mountPath: /data            # mount the PVC as a directory
+
       volumes:
         - name: db
           persistentVolumeClaim:
