@@ -1,40 +1,43 @@
 from urllib.parse import urlparse, parse_qs
-
 from flask import Flask, render_template, request, redirect, url_for
 from dotenv import load_dotenv
 from werkzeug.utils import secure_filename
 
-from models import init_db, query, execute
-from s3_utils import upload_fileobj, presigned_url
+# Works both for local runs and pytest imports
+try:
+    from .models import init_db, query, execute
+    from .s3_utils import upload_fileobj, presigned_url
+except ImportError:
+    from models import init_db, query, execute
+    from s3_utils import upload_fileobj, presigned_url
 
 
 load_dotenv()
-
 app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = 512 * 1024 * 1024  # 512 MB
+app.config["MAX_CONTENT_LENGTH"] = 512 * 1024 * 1024  # 512MB limit
 
 
 @app.route("/healthz")
 def healthz():
-    """Simple health endpoint for probes/tests."""
+    """Basic health endpoint for tests and monitoring."""
     return "OK", 200
 
 
 # ---------- YouTube helpers ----------
 def to_embed(url: str | None) -> str | None:
     """
-    Normalize common YouTube URLs (youtube.com, youtu.be, /shorts) to an embeddable URL:
-      https://www.youtube-nocookie.com/embed/<id>
-    Returns None when a video id cannot be extracted.
+    Normalize any common YouTube URL (youtube.com, youtu.be, shorts)
+    to an embeddable URL:
+        https://www.youtube-nocookie.com/embed/<id>
+    Returns None if the video id cannot be extracted.
     """
     if not url:
         return None
 
     u = urlparse(url)
     host = u.netloc.lower().replace("www.", "")
-
-    # Extract video id
     vid = ""
+
     if host == "youtu.be":
         vid = u.path.lstrip("/")
     elif "youtube.com" in host:
@@ -55,18 +58,20 @@ init_db()
 
 @app.route("/")
 def index():
+    """Home page listing all uploaded or linked videos."""
     rows = query(
         """
         SELECT id, title, source, s3_key, youtube_url, views, likes, created_at
-        FROM videos
-        ORDER BY id DESC
+        FROM videos ORDER BY id DESC
         """
     )
 
     videos = []
     for r in rows:
         _id, title, source, s3_key, yt_url, views, likes, created_at = r
-        play_url = presigned_url(s3_key) if (source == "s3" and s3_key) else to_embed(yt_url)
+        play_url = (
+            presigned_url(s3_key) if source == "s3" and s3_key else to_embed(yt_url)
+        )
         videos.append(
             {
                 "id": _id,
@@ -86,12 +91,12 @@ def index():
 
 @app.route("/upload", methods=["GET", "POST"])
 def upload():
+    """Upload a video file to S3 or add a YouTube link."""
     if request.method == "POST":
         title = request.form.get("title", "Untitled").strip()
         youtube_url = (request.form.get("youtube_url") or "").strip()
         file = request.files.get("file")
 
-        # Add a YouTube link
         if youtube_url:
             execute(
                 "INSERT INTO videos (title, source, youtube_url) VALUES (?, 'youtube', ?)",
@@ -99,7 +104,6 @@ def upload():
             )
             return redirect(url_for("index"))
 
-        # Upload a file to S3
         if file and file.filename:
             filename = secure_filename(file.filename)
             key = f"uploads/{filename}"
@@ -116,12 +120,9 @@ def upload():
 
 @app.route("/watch/<int:vid>")
 def watch(vid: int):
+    """Render a single video playback page."""
     row = query(
-        """
-        SELECT id, title, source, s3_key, youtube_url, views, likes
-        FROM videos
-        WHERE id=?
-        """,
+        "SELECT id, title, source, s3_key, youtube_url, views, likes FROM videos WHERE id=?",
         (vid,),
     )
     if not row:
@@ -130,8 +131,7 @@ def watch(vid: int):
     _id, title, source, s3_key, yt_url, views, likes = row[0]
     execute("UPDATE videos SET views = views + 1 WHERE id=?", (vid,))
 
-    play_url = presigned_url(s3_key) if (source == "s3" and s3_key) else to_embed(yt_url)
-
+    play_url = presigned_url(s3_key) if source == "s3" and s3_key else to_embed(yt_url)
     return render_template(
         "watch.html",
         video={
@@ -147,6 +147,7 @@ def watch(vid: int):
 
 @app.route("/like/<int:vid>", methods=["POST"])
 def like(vid: int):
+    """Increment like counter for a given video."""
     execute("UPDATE videos SET likes = likes + 1 WHERE id=?", (vid,))
     return ("", 204)
 
