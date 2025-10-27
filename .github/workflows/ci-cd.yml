@@ -91,5 +91,5 @@ jobs:
           sudo kubectl apply -n devtube -f ~/k8s/deployment.yaml
           sudo kubectl apply -n devtube -f ~/k8s/service.yaml
           sudo kubectl -n devtube rollout status deploy/devtube --timeout=120s
-          curl -fsS http://127.0.0.1:30080/healthz
+          curl -fsS http://127.0.0.1:30080/
           EOF
