@@ -1,26 +1,31 @@
-# app/main.py (top)
-import os
 from urllib.parse import urlparse, parse_qs
+
 from flask import Flask, render_template, request, redirect, url_for
 from dotenv import load_dotenv
 from werkzeug.utils import secure_filename
+
 from models import init_db, query, execute
 from s3_utils import upload_fileobj, presigned_url
 
+
 load_dotenv()
+
 app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = 512 * 1024 * 1024  # 512MB cap
+app.config["MAX_CONTENT_LENGTH"] = 512 * 1024 * 1024  # 512 MB
+
 
 @app.route("/healthz")
 def healthz():
+    """Simple health endpoint for probes/tests."""
     return "OK", 200
+
 
 # ---------- YouTube helpers ----------
 def to_embed(url: str | None) -> str | None:
     """
-    Normalize any common YouTube URL (youtube.com, youtu.be, shorts) to an embeddable URL:
+    Normalize common YouTube URLs (youtube.com, youtu.be, /shorts) to an embeddable URL:
       https://www.youtube-nocookie.com/embed/<id>
-    Returns None if the video id cannot be extracted.
+    Returns None when a video id cannot be extracted.
     """
     if not url:
         return None
@@ -28,18 +33,15 @@ def to_embed(url: str | None) -> str | None:
     u = urlparse(url)
     host = u.netloc.lower().replace("www.", "")
 
-    # extract video id
+    # Extract video id
     vid = ""
     if host == "youtu.be":
         vid = u.path.lstrip("/")
     elif "youtube.com" in host:
-        # /watch?v=ID
         if u.path.startswith("/watch"):
             vid = parse_qs(u.query).get("v", [""])[0]
-        # /embed/ID
         elif "/embed/" in u.path:
             vid = u.path.split("/embed/")[-1].split("/")[0]
-        # /shorts/ID
         elif "/shorts/" in u.path:
             vid = u.path.split("/shorts/")[-1].split("/")[0]
 
@@ -47,7 +49,7 @@ def to_embed(url: str | None) -> str | None:
 # -------------------------------------
 
 
-# Ensure DB exists
+# Ensure DB exists on startup
 init_db()
 
 
@@ -56,15 +58,15 @@ def index():
     rows = query(
         """
         SELECT id, title, source, s3_key, youtube_url, views, likes, created_at
-        FROM videos ORDER BY id DESC
+        FROM videos
+        ORDER BY id DESC
         """
     )
+
     videos = []
     for r in rows:
         _id, title, source, s3_key, yt_url, views, likes, created_at = r
-        play_url = (
-            presigned_url(s3_key) if source == "s3" and s3_key else to_embed(yt_url)
-        )
+        play_url = presigned_url(s3_key) if (source == "s3" and s3_key) else to_embed(yt_url)
         videos.append(
             {
                 "id": _id,
@@ -78,6 +80,7 @@ def index():
                 "play_url": play_url,
             }
         )
+
     return render_template("index.html", videos=videos)
 
 
@@ -90,7 +93,6 @@ def upload():
 
         # Add a YouTube link
         if youtube_url:
-            # store original URL; we'll normalize when playing
             execute(
                 "INSERT INTO videos (title, source, youtube_url) VALUES (?, 'youtube', ?)",
                 (title or "Untitled", youtube_url),
@@ -115,7 +117,11 @@ def upload():
 @app.route("/watch/<int:vid>")
 def watch(vid: int):
     row = query(
-        "SELECT id, title, source, s3_key, youtube_url, views, likes FROM videos WHERE id=?",
+        """
+        SELECT id, title, source, s3_key, youtube_url, views, likes
+        FROM videos
+        WHERE id=?
+        """,
         (vid,),
     )
     if not row:
@@ -124,7 +130,7 @@ def watch(vid: int):
     _id, title, source, s3_key, yt_url, views, likes = row[0]
     execute("UPDATE videos SET views = views + 1 WHERE id=?", (vid,))
 
-    play_url = presigned_url(s3_key) if source == "s3" and s3_key else to_embed(yt_url)
+    play_url = presigned_url(s3_key) if (source == "s3" and s3_key) else to_embed(yt_url)
 
     return render_template(
         "watch.html",

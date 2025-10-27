@@ -1,12 +1,7 @@
-# .flake8
+# .flake8 (root of repo)
 [flake8]
 max-line-length = 100
-extend-ignore = E203, W503, E302   # ignore only the blank-line rule globally
-exclude =
-    .git,
-    __pycache__,
-    .venv,
-    terraform,
-    docker
+extend-ignore = E203, W503, E302
+exclude = .git,__pycache__,.venv,terraform,docker
 per-file-ignores =
     app/tests/*: F401
