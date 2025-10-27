@@ -80,17 +80,16 @@ jobs:
         run: scp -o StrictHostKeyChecking=no -r k8s ubuntu@${{ secrets.EC2_HOST }}:/home/ubuntu/
 
       - name: Apply manifests on EC2
+        env:
+          IMAGE_SHA: ghcr.io/tomas94tomas/devtube:${{ github.sha }}
         run: |
-          ssh -o StrictHostKeyChecking=no ubuntu@${{ secrets.EC2_HOST }} <<'EOF'
+          ssh -o StrictHostKeyChecking=no ubuntu@${{ secrets.EC2_HOST }} <<EOF
           set -euo pipefail
           echo "Using image: ${IMAGE_SHA}"
           sudo kubectl create ns devtube || true
-          # Option 1: patch the image directly (avoids sed + ensures pull)
           sudo kubectl -n devtube set image deploy/devtube web=${IMAGE_SHA} --record || true
-          # Apply/ensure other objects are in place
           sudo kubectl apply -n devtube -f ~/k8s/deployment.yaml
           sudo kubectl apply -n devtube -f ~/k8s/service.yaml
           sudo kubectl -n devtube rollout status deploy/devtube --timeout=120s
-          # Health check (hit the NodePort on the node IP)
           curl -fsS http://127.0.0.1:30080/healthz
           EOF
