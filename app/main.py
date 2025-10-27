@@ -1,10 +1,13 @@
+# app/main.py (top)
 import os
 from urllib.parse import urlparse, parse_qs
 from flask import Flask, render_template, request, redirect, url_for
 from dotenv import load_dotenv
 from werkzeug.utils import secure_filename
-from models import init_db, query, execute
-from s3_utils import upload_fileobj, presigned_url
+
+#package-relative imports
+from .models import init_db, query, execute
+from .s3_utils import upload_fileobj, presigned_url
 
 load_dotenv()
 app = Flask(__name__)
