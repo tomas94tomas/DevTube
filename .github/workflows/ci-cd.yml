@@ -67,8 +67,7 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     env:
-      IMAGE: ghcr.io/tomas94tomas/devtube:latest
-
+      IMAGE_SHA: ghcr.io/tomas94tomas/devtube:${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
 
@@ -78,21 +77,20 @@ jobs:
           ssh-private-key: ${{ secrets.EC2_SSH_KEY }}
 
       - name: Copy manifests
-        run: |
-          for i in {1..5}; do
-            scp -o StrictHostKeyChecking=no -r k8s ubuntu@${{ secrets.EC2_HOST }}:/home/ubuntu/ && break
-            echo "scp retry $i/5"; sleep 3
-          done
+        run: scp -o StrictHostKeyChecking=no -r k8s ubuntu@${{ secrets.EC2_HOST }}:/home/ubuntu/
 
       - name: Apply manifests on EC2
         run: |
-          ssh -o StrictHostKeyChecking=no ubuntu@${{ secrets.EC2_HOST }} <<EOF
+          ssh -o StrictHostKeyChecking=no ubuntu@${{ secrets.EC2_HOST }} <<'EOF'
           set -euo pipefail
-          echo "Using image: ${IMAGE}"
+          echo "Using image: ${IMAGE_SHA}"
           sudo kubectl create ns devtube || true
-          sudo sed -i "s|ghcr.io/tomas94tomas/devtube:latest|${IMAGE}|g" ~/k8s/deployment.yaml
+          # Option 1: patch the image directly (avoids sed + ensures pull)
+          sudo kubectl -n devtube set image deploy/devtube web=${IMAGE_SHA} --record || true
+          # Apply/ensure other objects are in place
           sudo kubectl apply -n devtube -f ~/k8s/deployment.yaml
           sudo kubectl apply -n devtube -f ~/k8s/service.yaml
-          sudo kubectl -n devtube rollout status deploy/devtube --timeout=90s
+          sudo kubectl -n devtube rollout status deploy/devtube --timeout=120s
+          # Health check (hit the NodePort on the node IP)
           curl -fsS http://127.0.0.1:30080/healthz
           EOF
