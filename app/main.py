@@ -4,15 +4,16 @@ from urllib.parse import urlparse, parse_qs
 from flask import Flask, render_template, request, redirect, url_for
 from dotenv import load_dotenv
 from werkzeug.utils import secure_filename
-
-#package-relative imports
-from .models import init_db, query, execute
-from .s3_utils import upload_fileobj, presigned_url
+from models import init_db, query, execute
+from s3_utils import upload_fileobj, presigned_url
 
 load_dotenv()
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 512 * 1024 * 1024  # 512MB cap
 
+@app.route("/healthz")
+def healthz():
+    return "OK", 200
 
 # ---------- YouTube helpers ----------
 def to_embed(url: str | None) -> str | None:
