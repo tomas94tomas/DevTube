@@ -1,10 +1,16 @@
-import os
 from urllib.parse import urlparse, parse_qs
 from flask import Flask, render_template, request, redirect, url_for
 from dotenv import load_dotenv
 from werkzeug.utils import secure_filename
-from .models import init_db, query, execute
-from .s3_utils import upload_fileobj, presigned_url, delete_object
+
+# Support both "python -m app.main" (package) and "python app/main.py" (script)
+try:
+    # When executed as a package
+    from .models import init_db, query, execute
+    from .s3_utils import upload_fileobj, presigned_url, delete_object
+except ImportError:  # When executed directly as a script
+    from models import init_db, query, execute
+    from s3_utils import upload_fileobj, presigned_url, delete_object
 
 load_dotenv()
 app = Flask(__name__)
@@ -60,7 +66,7 @@ def index():
     videos = []
     for r in rows:
         _id, title, source, s3_key, yt_url, views, likes, created_at = r
-        play_url = presigned_url(s3_key) if source == "s3" and s3_key else to_embed(yt_url)
+        play_url = presigned_url(s3_key) if (source == "s3" and s3_key) else to_embed(yt_url)
         videos.append(
             {
                 "id": _id,
@@ -118,7 +124,7 @@ def watch(vid: int):
 
     _id, title, source, s3_key, yt_url, views, likes = row[0]
     execute("UPDATE videos SET views = views + 1 WHERE id=?", (vid,))
-    play_url = presigned_url(s3_key) if source == "s3" and s3_key else to_embed(yt_url)
+    play_url = presigned_url(s3_key) if (source == "s3" and s3_key) else to_embed(yt_url)
 
     return render_template(
         "watch.html",
@@ -139,17 +145,13 @@ def delete_video(vid: int):
     Delete a video record; if it is S3-backed, delete the object too.
     Safe to call even if the S3 object was already manually removed.
     """
-    row = query(
-        "SELECT source, s3_key FROM videos WHERE id=?",
-        (vid,),
-    )
+    row = query("SELECT source, s3_key FROM videos WHERE id=?", (vid,))
     if not row:
         return "Not found", 404
 
     source, s3_key = row[0]
     if source == "s3" and s3_key:
-        # Ignore missing keys; surface unexpected errors
-        delete_object(s3_key)
+        delete_object(s3_key)  # Swallows NoSuchKey
 
     execute("DELETE FROM videos WHERE id=?", (vid,))
     return redirect(url_for("index"))
@@ -162,4 +164,5 @@ def like(vid: int):
 
 
 if __name__ == "__main__":
+    # When run directly (e.g., local dev: python app/main.py)
     app.run(host="0.0.0.0", port=5000)
