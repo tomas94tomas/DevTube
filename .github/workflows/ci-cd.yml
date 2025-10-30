@@ -62,34 +62,42 @@ jobs:
           docker push $IMAGE:${{ github.sha }}
           docker push $IMAGE:latest
 
-  deploy:
-    needs: build-and-push
-    if: github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    env:
-      IMAGE_SHA: ghcr.io/tomas94tomas/devtube:${{ github.sha }}
-    steps:
-      - uses: actions/checkout@v4
+deploy:
+  needs: build-and-push
+  if: github.ref == 'refs/heads/main'
+  runs-on: ubuntu-latest
+  env:
+    IMAGE_BASE: ghcr.io/tomas94tomas/devtube
 
-      - name: Setup SSH
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.EC2_SSH_KEY }}
+  steps:
+    - uses: actions/checkout@v4
 
-      - name: Copy manifests
-        run: scp -o StrictHostKeyChecking=no -r k8s ubuntu@${{ secrets.EC2_HOST }}:/home/ubuntu/
+    - name: Setup SSH
+      uses: webfactory/ssh-agent@v0.9.0
+      with:
+        ssh-private-key: ${{ secrets.EC2_SSH_KEY }}
 
-      - name: Apply manifests on EC2
-        env:
-          IMAGE_SHA: ghcr.io/tomas94tomas/devtube:${{ github.sha }}
-        run: |
-          ssh -o StrictHostKeyChecking=no ubuntu@${{ secrets.EC2_HOST }} <<EOF
-          set -euo pipefail
-          echo "Using image: ${IMAGE_SHA}"
-          sudo kubectl create ns devtube || true
-          sudo kubectl -n devtube set image deploy/devtube web=${IMAGE_SHA} --record || true
-          sudo kubectl apply -n devtube -f ~/k8s/deployment.yaml
-          sudo kubectl apply -n devtube -f ~/k8s/service.yaml
-          sudo kubectl -n devtube rollout status deploy/devtube --timeout=120s
-          curl -fsS http://127.0.0.1:30080/
-          EOF
+    - name: Copy manifests
+      run: scp -o StrictHostKeyChecking=no -r k8s ubuntu@${{ secrets.EC2_HOST }}:/home/ubuntu/
+
+    - name: Apply manifests on EC2 (set image to immutable SHA)
+      env:
+        IMG_SHA: ${{ env.IMAGE_BASE }}:${{ github.sha }}
+      run: |
+        ssh -o StrictHostKeyChecking=no ubuntu@${{ secrets.EC2_HOST }} <<EOF
+        set -euo pipefail
+        NS=devtube
+        echo "Deploy image: ${IMG_SHA}"
+
+        # Ensure namespace & manifests exist
+        sudo kubectl create ns $NS || true
+        sudo kubectl -n $NS apply -f k8s/deployment.yaml
+        sudo kubectl -n $NS apply -f k8s/service.yaml
+
+        # Force the Deployment to use the immutable image tag
+        sudo kubectl -n $NS set image deploy/devtube web=${IMG_SHA} --record=true
+
+        # Wait for rollout and do a tiny smoke check
+        sudo kubectl -n $NS rollout status deploy/devtube --timeout=120s
+        curl -fsS http://127.0.0.1:30080/ > /dev/null || true
+        EOF
