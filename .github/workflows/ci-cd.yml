@@ -80,29 +80,48 @@ jobs:
       - name: Copy manifests
         run: scp -o StrictHostKeyChecking=no -r k8s ubuntu@${{ secrets.EC2_HOST }}:/home/ubuntu/
 
-      - name: Apply manifests on EC2 (immutable SHA)
+      - name: Apply manifests on EC2 (immutable SHA with retries)
+        env:
+          IMG_SHA: ${{ env.IMAGE_BASE }}:${{ github.sha }}
         run: |
-          ssh -o StrictHostKeyChecking=no ubuntu@${{ secrets.EC2_HOST }} "IMG_SHA=${{ env.IMAGE_BASE }}:${{ github.sha }} bash -s" <<'EOF'
+          ssh -o StrictHostKeyChecking=no ubuntu@${{ secrets.EC2_HOST }} "IMG_SHA=${IMG_SHA}" <<'EOF'
           set -euo pipefail
-
           NS=devtube
           echo "Deploy image: ${IMG_SHA}"
 
+          # retry wrapper for kubectl (handles transient API hiccups)
+          k() {
+            local try
+            for try in 1 2 3 4 5; do
+              if sudo kubectl --request-timeout=30s "$@"; then return 0; fi
+              echo "kubectl retry $try failed; sleeping 5s..."
+              sleep 5
+            done
+            # one last attempt with full output
+            sudo kubectl "$@"
+          }
+
+          # Warm up the API once (reduces first-call timeouts)
+          k version --short || true
+
           # Ensure namespace exists
-          if ! sudo kubectl get namespace "${NS}" >/dev/null 2>&1; then
-            sudo kubectl create namespace "${NS}"
+          if ! k get namespace "${NS}" >/dev/null 2>&1; then
+            k create namespace "${NS}"
           fi
 
-          # Apply manifests into the namespace
-          sudo kubectl apply -n "${NS}" -f ~/k8s/deployment.yaml
-          sudo kubectl apply -n "${NS}" -f ~/k8s/service.yaml
+          # Apply manifests
+          k apply -n "${NS}" -f ~/k8s/deployment.yaml
+          k apply -n "${NS}" -f ~/k8s/service.yaml
 
-          # Pin deployment to the immutable image (by SHA)
-          sudo kubectl -n "${NS}" set image deploy/devtube web="${IMG_SHA}" --record=true
+          # Set immutable image (SHA tag)
+          k -n "${NS}" set image deploy/devtube web="${IMG_SHA}" --record=true
 
-          # Wait for rollout and do a quick smoke check
-          sudo kubectl -n "${NS}" rollout status deploy/devtube --timeout=120s
-          curl -fsS http://127.0.0.1:30080/healthz >/dev/null || true
+          # Wait for rollout (give it ample time to pull)
+          k -n "${NS}" rollout status deploy/devtube --timeout=5m
+
+          # Quick smoke-check (NodePort on the same node)
+          curl -fsS --max-time 5 http://127.0.0.1:30080/ >/dev/null || true
           EOF
+
 
 
