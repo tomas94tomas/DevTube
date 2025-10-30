@@ -5,10 +5,17 @@
   {% for v in videos %}
   <div class="col-md-4">
     <div class="card h-100">
-      <div class="card-body">
+      <div class="card-body d-flex flex-column">
         <h5 class="card-title">{{ v.title }}</h5>
-        <p class="card-text small text-muted">Source: {{ v.source.upper() }} · ❤ {{ v.likes }} · 👁 {{ v.views }}</p>
-        <a class="btn btn-primary" href="/watch/{{ v.id }}">Watch</a>
+        <p class="card-text small text-muted">
+          Source: {{ v.source.upper() }} · ❤ {{ v.likes }} · 👁 {{ v.views }}
+        </p>
+        <div class="mt-auto d-flex gap-2">
+          <a class="btn btn-primary" href="/watch/{{ v.id }}">Watch</a>
+          <form method="post" action="/delete/{{ v.id }}" onsubmit="return confirm('Delete this video?');">
+            <button class="btn btn-outline-danger" type="submit">Delete</button>
+          </form>
+        </div>
       </div>
     </div>
   </div>

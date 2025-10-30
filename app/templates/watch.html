@@ -18,8 +18,13 @@
   {% endif %}
 </div>
 
-<p>❤ {{ video.likes }} · 👁 {{ video.views }}</p>
-<form method="post" action="/like/{{ video.id }}" onsubmit="fetch(this.action,{method:'POST'}).then(()=>location.reload());return false;">
-  <button class="btn btn-danger">Like</button>
-</form>
+<div class="d-flex align-items-center gap-3">
+  <span>❤ {{ video.likes }} · 👁 {{ video.views }}</span>
+  <form method="post" action="/like/{{ video.id }}" onsubmit="fetch(this.action,{method:'POST'}).then(()=>location.reload());return false;">
+    <button class="btn btn-danger">Like</button>
+  </form>
+  <form method="post" action="/delete/{{ video.id }}" onsubmit="return confirm('Delete this video?');">
+    <button class="btn btn-outline-danger">Delete</button>
+  </form>
+</div>
 {% endblock %}

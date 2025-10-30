@@ -1,34 +1,26 @@
+import os
 from urllib.parse import urlparse, parse_qs
 from flask import Flask, render_template, request, redirect, url_for
 from dotenv import load_dotenv
 from werkzeug.utils import secure_filename
-
-# Works both for local runs and pytest imports
-try:
-    from .models import init_db, query, execute
-    from .s3_utils import upload_fileobj, presigned_url
-except ImportError:
-    from models import init_db, query, execute
-    from s3_utils import upload_fileobj, presigned_url
-
+from models import init_db, query, execute
+from s3_utils import upload_fileobj, presigned_url, delete_object
 
 load_dotenv()
 app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = 512 * 1024 * 1024  # 512MB limit
+app.config["MAX_CONTENT_LENGTH"] = 512 * 1024 * 1024  # 512MB cap
 
 
 @app.route("/healthz")
 def healthz():
-    """Basic health endpoint for tests and monitoring."""
     return "OK", 200
 
 
 # ---------- YouTube helpers ----------
 def to_embed(url: str | None) -> str | None:
     """
-    Normalize any common YouTube URL (youtube.com, youtu.be, shorts)
-    to an embeddable URL:
-        https://www.youtube-nocookie.com/embed/<id>
+    Normalize common YouTube URLs (youtube.com, youtu.be, shorts) to:
+      https://www.youtube-nocookie.com/embed/<id>
     Returns None if the video id cannot be extracted.
     """
     if not url:
@@ -36,8 +28,9 @@ def to_embed(url: str | None) -> str | None:
 
     u = urlparse(url)
     host = u.netloc.lower().replace("www.", "")
-    vid = ""
 
+    # extract video id
+    vid = ""
     if host == "youtu.be":
         vid = u.path.lstrip("/")
     elif "youtube.com" in host:
@@ -52,26 +45,22 @@ def to_embed(url: str | None) -> str | None:
 # -------------------------------------
 
 
-# Ensure DB exists on startup
+# Ensure DB exists
 init_db()
 
 
 @app.route("/")
 def index():
-    """Home page listing all uploaded or linked videos."""
     rows = query(
         """
         SELECT id, title, source, s3_key, youtube_url, views, likes, created_at
         FROM videos ORDER BY id DESC
         """
     )
-
     videos = []
     for r in rows:
         _id, title, source, s3_key, yt_url, views, likes, created_at = r
-        play_url = (
-            presigned_url(s3_key) if source == "s3" and s3_key else to_embed(yt_url)
-        )
+        play_url = presigned_url(s3_key) if source == "s3" and s3_key else to_embed(yt_url)
         videos.append(
             {
                 "id": _id,
@@ -85,18 +74,17 @@ def index():
                 "play_url": play_url,
             }
         )
-
     return render_template("index.html", videos=videos)
 
 
 @app.route("/upload", methods=["GET", "POST"])
 def upload():
-    """Upload a video file to S3 or add a YouTube link."""
     if request.method == "POST":
         title = request.form.get("title", "Untitled").strip()
         youtube_url = (request.form.get("youtube_url") or "").strip()
         file = request.files.get("file")
 
+        # Add a YouTube link
         if youtube_url:
             execute(
                 "INSERT INTO videos (title, source, youtube_url) VALUES (?, 'youtube', ?)",
@@ -104,6 +92,7 @@ def upload():
             )
             return redirect(url_for("index"))
 
+        # Upload a file to S3
         if file and file.filename:
             filename = secure_filename(file.filename)
             key = f"uploads/{filename}"
@@ -120,7 +109,6 @@ def upload():
 
 @app.route("/watch/<int:vid>")
 def watch(vid: int):
-    """Render a single video playback page."""
     row = query(
         "SELECT id, title, source, s3_key, youtube_url, views, likes FROM videos WHERE id=?",
         (vid,),
@@ -130,8 +118,8 @@ def watch(vid: int):
 
     _id, title, source, s3_key, yt_url, views, likes = row[0]
     execute("UPDATE videos SET views = views + 1 WHERE id=?", (vid,))
-
     play_url = presigned_url(s3_key) if source == "s3" and s3_key else to_embed(yt_url)
+
     return render_template(
         "watch.html",
         video={
@@ -145,9 +133,30 @@ def watch(vid: int):
     )
 
 
-@app.route("/like/<int:vid>", methods=["POST"])
+@app.post("/delete/<int:vid>")
+def delete_video(vid: int):
+    """
+    Delete a video record; if it is S3-backed, delete the object too.
+    Safe to call even if the S3 object was already manually removed.
+    """
+    row = query(
+        "SELECT source, s3_key FROM videos WHERE id=?",
+        (vid,),
+    )
+    if not row:
+        return "Not found", 404
+
+    source, s3_key = row[0]
+    if source == "s3" and s3_key:
+        # Ignore missing keys; surface unexpected errors
+        delete_object(s3_key)
+
+    execute("DELETE FROM videos WHERE id=?", (vid,))
+    return redirect(url_for("index"))
+
+
+@app.post("/like/<int:vid>")
 def like(vid: int):
-    """Increment like counter for a given video."""
     execute("UPDATE videos SET likes = likes + 1 WHERE id=?", (vid,))
     return ("", 204)
 
