@@ -5,7 +5,7 @@ DevTube is a compact, production-style demo service that lets you:
 - upload a video file (stored in **Amazon S3**) or
 - add a **YouTube** link,
 
-…then watch it through a simple web UI. The app runs locally (Docker), or in Kubernetes (**k3s** on **EC2**) provisioned by **Terraform**, and is delivered via a full **CI/CD pipeline** on **GitHub Actions**.
+.…then watch it through a simple web UI. The app runs locally (Docker), or in Kubernetes (**k3s** on **EC2**) provisioned by **Terraform**, and is delivered via a full **CI/CD pipeline** on **GitHub Actions**.
 
 ---
 
