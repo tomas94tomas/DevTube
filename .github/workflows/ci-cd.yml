@@ -81,16 +81,14 @@ jobs:
         run: scp -o StrictHostKeyChecking=no -r k8s ubuntu@${{ secrets.EC2_HOST }}:/home/ubuntu/
 
       - name: Apply manifests on EC2 (immutable SHA)
-        env:
-          IMG_SHA: ${{ env.IMAGE_BASE }}:${{ github.sha }}
         run: |
-          ssh -o StrictHostKeyChecking=no ubuntu@${{ secrets.EC2_HOST }} <<'EOF'
+          ssh -o StrictHostKeyChecking=no ubuntu@${{ secrets.EC2_HOST }} "IMG_SHA=${{ env.IMAGE_BASE }}:${{ github.sha }} bash -s" <<'EOF'
           set -euo pipefail
 
           NS=devtube
           echo "Deploy image: ${IMG_SHA}"
 
-          # Ensure namespace exists (no -f here)
+          # Ensure namespace exists
           if ! sudo kubectl get namespace "${NS}" >/dev/null 2>&1; then
             sudo kubectl create namespace "${NS}"
           fi
@@ -99,11 +97,12 @@ jobs:
           sudo kubectl apply -n "${NS}" -f ~/k8s/deployment.yaml
           sudo kubectl apply -n "${NS}" -f ~/k8s/service.yaml
 
-          # Force Deployment to use immutable image tag
+          # Pin deployment to the immutable image (by SHA)
           sudo kubectl -n "${NS}" set image deploy/devtube web="${IMG_SHA}" --record=true
 
-          # Wait for rollout and quick smoke check
+          # Wait for rollout and do a quick smoke check
           sudo kubectl -n "${NS}" rollout status deploy/devtube --timeout=120s
-          curl -fsS http://127.0.0.1:30080/ >/dev/null || true
+          curl -fsS http://127.0.0.1:30080/healthz >/dev/null || true
           EOF
+
 
